@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000002 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Thu, 20 Aug 2026 00:00:00 +0800
+Subject: [PATCH] sm: allow P550 test platform without a device root key
+
+The VF2 branch deliberately skips root-key copying on VisionFive 2. Apply the
+same test-only behavior to the new P550 platform until a real device root of
+trust is designed and provisioned.
+
+Upstream-Status: Inappropriate [test-only board port]
+---
+ src/sm.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/sm.c b/src/sm.c
+index d072e26..a2b421b 100644
+--- a/src/sm.c
++++ b/src/sm.c
+@@ -143,6 +143,6 @@ void sm_init(bool cold_boot)
+     // Copy the keypair from the root of trust
+     // Dont supported on visionfive2 for now
+-    #ifndef BOARD_VISIONFIVE2
++    #if !defined(BOARD_VISIONFIVE2) && !defined(BOARD_P550_TEST)
+     sm_copy_key();
+     #endif
+ 
+-- 
+2.34.1

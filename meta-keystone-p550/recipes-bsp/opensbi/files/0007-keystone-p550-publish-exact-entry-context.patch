@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000007 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Sat, 22 Aug 2026 00:00:00 +0800
+Subject: [PATCH] sm: publish the exact P550 first-entry context
+
+CREATE and RUN may execute on different P550 harts. Publish and snapshot the
+entry base with an explicit visibility barrier, and pass the exact entry PC to
+OpenSBI 1.6. Unlike the legacy VF2 path, the OpenSBI trap-context path does not
+require carrying a minus-four compensation across two C functions.
+
+Advance the original host ecall PC only when RUN fails before switching into
+the enclave. RESUME retains the interrupted-PC compensation performed by the
+monitor's stop/resume path.
+
+Upstream-Status: Inappropriate [P550/OpenSBI 1.6 integration]
+---
+ src/enclave.c | 14 ++++++++++++--
+ src/sm-sbi.c  |  7 +++++--
+ 2 files changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/src/enclave.c b/src/enclave.c
+index 35e4238..36a38f1 100644
+--- a/src/enclave.c
++++ b/src/enclave.c
+@@ -10,6 +10,7 @@
+ #include "platform-hook.h"
+ #include <sbi/sbi_string.h>
+ #include <sbi/riscv_asm.h>
++#include <sbi/riscv_barrier.h>
+ #include <sbi/riscv_locks.h>
+ #include <sbi/sbi_console.h>
+ 
+@@ -62,11 +63,20 @@ static inline void context_switch_to_enclave(struct sbi_trap_regs* regs,
+   csr_write(mideleg, interrupts);
+ 
+   if(load_parameters) {
++    uintptr_t dram_base;
++
++    /*
++     * CREATE and RUN may execute on different harts. Snapshot the
++     * published entry once so MEPC and a1 always describe the same EPM.
++     */
++    mb();
++    dram_base = *(volatile uintptr_t *)&enclaves[eid].params.dram_base;
++
+     // passing parameters for a first run
+-    regs->mepc = (uintptr_t) enclaves[eid].params.dram_base - 4; // regs->mepc will be +4 before sbi_ecall_handler return
++    regs->mepc = dram_base;
+     regs->mstatus = (1 << MSTATUS_MPP_SHIFT);
+     // $a1: (PA) DRAM base,
+-    regs->a1 = (uintptr_t) enclaves[eid].params.dram_base;
++    regs->a1 = dram_base;
+     // $a2: DRAM size,
+     regs->a2 = (uintptr_t) enclaves[eid].params.dram_size;
+     // $a3: (PA) kernel location,
+diff --git a/src/sm-sbi.c b/src/sm-sbi.c
+index 0c61753..7f46d36 100644
+--- a/src/sm-sbi.c
++++ b/src/sm-sbi.c
+@@ -35,8 +35,11 @@ unsigned long sbi_sm_destroy_enclave(unsigned long eid)
+ 
+ unsigned long sbi_sm_run_enclave(struct sbi_trap_regs *regs, unsigned long eid)
+ {
+-  regs->a0 = run_enclave(regs, (unsigned int) eid);
+-  regs->mepc += 4;
++  unsigned long ret = run_enclave(regs, (unsigned int) eid);
++
++  regs->a0 = ret;
++  if (ret)
++    regs->mepc += 4;
+   return 0;
+ }
+ 
+-- 
+2.34.1

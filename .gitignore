@@ -1,0 +1,19 @@
+# kas/Yocto generated state
+build/
+downloads/
+sstate-cache/
+tmp/
+flash/
+release-cache/
+artifacts/
+*.log
+
+# Component repositories are downloaded from sources.lock.yml.
+sources/*
+!sources/.gitkeep
+
+# Local editor state
+.venv/
+.vscode/
+.idea/
+*~

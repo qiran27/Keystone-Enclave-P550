@@ -1,0 +1,15 @@
+format: 1
+release: 2025.11.00-HFP550
+assets:
+  ubuntu:
+    filename: ubuntu-24.04-preinstalled-server-riscv64.img.xz
+    url: https://github.com/sifiveinc/hifive-premier-p550-ubuntu/releases/download/2025.11.00/ubuntu-24.04-preinstalled-server-riscv64.img.xz
+    sha256: 36d4305e6a0423874521c62fb76fa756223806686b4bdbd93c92487ec3db2ae3
+    size: 1851947824
+    role: prebuilt-root-filesystem
+  bootloader:
+    filename: bootloader_ddr5_secboot.bin
+    url: https://github.com/sifiveinc/freedom-u-sdk/releases/download/2025.11.00-HFP550/bootloader_ddr5_secboot.bin
+    sha256: 043a47a2516ea0cd1314c7d0f0788b8e86837db9335cd570addb2e27b1398250
+    size: 4187880
+    role: baseline-and-recovery-only

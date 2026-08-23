@@ -1,0 +1,241 @@
+From 0000000000000000000000000000000000000009 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Sat, 22 Aug 2026 00:00:00 +0800
+Subject: [PATCH] sm: queue concurrent PMP IPI updates per hart
+
+The initial OpenSBI 1.6 port serialized every PMP broadcast with a global
+spinlock and used one global command and completion counter. A hart waiting
+for remote acknowledgement held that lock in M-mode. If another hart entered
+a PMP operation at the same time, it could spin on the lock instead of
+processing the first hart's IPI, permanently deadlocking both harts.
+
+Follow OpenSBI 1.6's TLB IPI design: give each hart a FIFO, track completion
+on the source hart, and service inbound PMP requests while waiting for remote
+completion. Commands are copied into the destination FIFO, so concurrent
+source harts no longer share mutable command storage.
+
+Upstream-Status: Inappropriate [P550 OpenSBI 1.6 integration]
+---
+ src/ipi.c | 130 ++++++++++++++++++++++++++++++++++++++++----------------------
+ src/ipi.h |   1 +
+ 2 files changed, 86 insertions(+), 45 deletions(-)
+
+diff --git a/src/ipi.c b/src/ipi.c
+index 522587b..39b60ac 100644
+--- a/src/ipi.c
++++ b/src/ipi.c
+@@ -1,21 +1,24 @@
+ #include <sbi/sbi_ipi.h>
+ #include <sbi/sbi_scratch.h>
+ #include <sbi/sbi_error.h>
++#include <sbi/sbi_fifo.h>
++#include <sbi/sbi_heap.h>
+ #include <sbi/riscv_atomic.h>
+ #include <sbi/riscv_barrier.h>
+-#include <sbi/riscv_locks.h>
+ #include "ipi.h"
+ #include "pmp.h"
+ 
+ /*
+  * OpenSBI 1.6 no longer embeds arbitrary callbacks in sbi_tlb_info.  PMP
+- * updates therefore use a dedicated IPI event.  The lock makes the shared
+- * command single-writer while the acknowledgement count keeps the sender
+- * from returning until every remote HART has programmed its PMP entries.
++ * updates therefore use a dedicated IPI event.  Keep a FIFO on every HART,
++ * like OpenSBI's TLB IPI implementation, so two HARTs can issue PMP updates
++ * concurrently without waiting for each other while holding a global lock.
+  */
+-static spinlock_t pmp_ipi_lock = SPIN_LOCK_INITIALIZER;
+-static atomic_t pmp_ipi_pending = ATOMIC_INITIALIZER(0);
+-static struct sbi_pmp_ipi_info pmp_ipi_command;
++#define PMP_IPI_FIFO_ENTRIES 8
++
++static unsigned long pmp_ipi_sync_off;
++static unsigned long pmp_ipi_fifo_off;
++static unsigned long pmp_ipi_fifo_mem_off;
+ static u32 pmp_ipi_event = SBI_IPI_EVENT_MAX;
+ 
+ static void sbi_pmp_ipi_local_update(const struct sbi_pmp_ipi_info *info)
+@@ -27,11 +30,51 @@ static void sbi_pmp_ipi_local_update(const struct sbi_pmp_ipi_info *info)
+   }
+ }
+ 
++static bool pmp_ipi_process_once(struct sbi_scratch *scratch)
++{
++  struct sbi_pmp_ipi_info info;
++  struct sbi_scratch *source_scratch;
++  struct sbi_fifo *fifo =
++      sbi_scratch_offset_ptr(scratch, pmp_ipi_fifo_off);
++  atomic_t *source_sync;
++
++  if (sbi_fifo_dequeue(fifo, &info))
++    return false;
++
++  sbi_pmp_ipi_local_update(&info);
++  source_scratch = sbi_hartindex_to_scratch(info.source_hartindex);
++  if (source_scratch) {
++    source_sync = sbi_scratch_offset_ptr(source_scratch, pmp_ipi_sync_off);
++    atomic_sub_return(source_sync, 1);
++  }
++
++  return true;
++}
++
++static void pmp_ipi_process(struct sbi_scratch *scratch)
++{
++  while (pmp_ipi_process_once(scratch))
++    ;
++}
++
++static void pmp_ipi_sync(struct sbi_scratch *scratch)
++{
++  atomic_t *sync = sbi_scratch_offset_ptr(scratch, pmp_ipi_sync_off);
++
++  while (atomic_read(sync) > 0) {
++    /* Service an inbound PMP request while waiting to avoid AB/BA deadlock. */
++    if (!pmp_ipi_process_once(scratch))
++      cpu_relax();
++  }
++}
++
+ static int pmp_ipi_update(struct sbi_scratch *scratch,
+                           struct sbi_scratch *remote_scratch,
+                           u32 remote_hartindex, void *data)
+ {
+-  const struct sbi_pmp_ipi_info *info = data;
++  struct sbi_pmp_ipi_info *info = data;
++  struct sbi_fifo *remote_fifo;
++  atomic_t *sync;
+ 
+   (void) remote_hartindex;
+   if (scratch == remote_scratch) {
+@@ -39,25 +82,15 @@ static int pmp_ipi_update(struct sbi_scratch *scratch,
+     return SBI_IPI_UPDATE_BREAK;
+   }
+ 
+-  atomic_add_return(&pmp_ipi_pending, 1);
+-  return SBI_IPI_UPDATE_SUCCESS;
+-}
+-
+-static void pmp_ipi_process(struct sbi_scratch *scratch)
+-{
+-  (void) scratch;
+-  smp_rmb();
+-  sbi_pmp_ipi_local_update(&pmp_ipi_command);
+-  smp_wmb();
+-  atomic_sub_return(&pmp_ipi_pending, 1);
+-}
++  remote_fifo = sbi_scratch_offset_ptr(remote_scratch, pmp_ipi_fifo_off);
++  if (sbi_fifo_enqueue(remote_fifo, info, false) < 0) {
++    pmp_ipi_process_once(scratch);
++    return SBI_IPI_UPDATE_RETRY;
++  }
+ 
+-static void pmp_ipi_sync(struct sbi_scratch *scratch)
+-{
+-  (void) scratch;
+-  while (atomic_read(&pmp_ipi_pending))
+-    cpu_relax();
+-  smp_rmb();
++  sync = sbi_scratch_offset_ptr(scratch, pmp_ipi_sync_off);
++  atomic_add_return(sync, 1);
++  return SBI_IPI_UPDATE_SUCCESS;
+ }
+ 
+ static const struct sbi_ipi_event_ops pmp_ipi_ops = {
+@@ -70,36 +103,65 @@ static const struct sbi_ipi_event_ops pmp_ipi_ops = {
+ int sbi_pmp_ipi_init(bool cold_boot)
+ {
+   int event;
++  void *fifo_mem;
++  atomic_t *sync;
++  struct sbi_fifo *fifo;
++  struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
++
++  if (cold_boot) {
++    pmp_ipi_sync_off = sbi_scratch_alloc_offset(sizeof(*sync));
++    if (!pmp_ipi_sync_off)
++      return SBI_ENOMEM;
++
++    pmp_ipi_fifo_off = sbi_scratch_alloc_offset(sizeof(*fifo));
++    if (!pmp_ipi_fifo_off)
++      return SBI_ENOMEM;
++
++    pmp_ipi_fifo_mem_off = sbi_scratch_alloc_offset(sizeof(fifo_mem));
++    if (!pmp_ipi_fifo_mem_off)
++      return SBI_ENOMEM;
++
++    event = sbi_ipi_event_create(&pmp_ipi_ops);
++    if (event < 0)
++      return event;
++    pmp_ipi_event = event;
++  } else if (!pmp_ipi_sync_off || !pmp_ipi_fifo_off ||
++             !pmp_ipi_fifo_mem_off ||
++             pmp_ipi_event == SBI_IPI_EVENT_MAX) {
++    return SBI_ENODEV;
++  }
+ 
+-  if (!cold_boot)
+-    return pmp_ipi_event == SBI_IPI_EVENT_MAX ? SBI_ENODEV : 0;
+-
+-  atomic_write(&pmp_ipi_pending, 0);
+-  event = sbi_ipi_event_create(&pmp_ipi_ops);
+-  if (event < 0)
+-    return event;
++  sync = sbi_scratch_offset_ptr(scratch, pmp_ipi_sync_off);
++  fifo = sbi_scratch_offset_ptr(scratch, pmp_ipi_fifo_off);
++  fifo_mem = sbi_scratch_read_type(scratch, void *, pmp_ipi_fifo_mem_off);
++  if (!fifo_mem) {
++    fifo_mem = sbi_malloc(PMP_IPI_FIFO_ENTRIES * SBI_PMP_IPI_INFO_SIZE);
++    if (!fifo_mem)
++      return SBI_ENOMEM;
++    sbi_scratch_write_type(scratch, void *, pmp_ipi_fifo_mem_off, fifo_mem);
++  }
+ 
+-  pmp_ipi_event = event;
++  ATOMIC_INIT(sync, 0);
++  sbi_fifo_init(fifo, fifo_mem, PMP_IPI_FIFO_ENTRIES,
++                SBI_PMP_IPI_INFO_SIZE);
+   return 0;
+ }
+ 
+ int send_and_sync_pmp_ipi(int region_idx, int type, uint8_t perm)
+ {
+   int rc;
++  struct sbi_pmp_ipi_info info;
+ 
+   if (pmp_ipi_event == SBI_IPI_EVENT_MAX)
+     return SBI_ENODEV;
+ 
+-  spin_lock(&pmp_ipi_lock);
+-  pmp_ipi_command.type = type;
+-  pmp_ipi_command.rid = region_idx;
+-  pmp_ipi_command.perm = perm;
+-  atomic_write(&pmp_ipi_pending, 0);
+-  smp_wmb();
++  info.type = type;
++  info.rid = region_idx;
++  info.perm = perm;
++  info.source_hartindex = current_hartindex();
+ 
+   /* hbase == -1 selects all interruptible HARTs in the current domain. */
+-  rc = sbi_ipi_send_many(0, -1UL, pmp_ipi_event, &pmp_ipi_command);
+-  spin_unlock(&pmp_ipi_lock);
++  rc = sbi_ipi_send_many(0, -1UL, pmp_ipi_event, &info);
+ 
+   return rc;
+ }
+diff --git a/src/ipi.h b/src/ipi.h
+index a8f746c..4d79076 100644
+--- a/src/ipi.h
++++ b/src/ipi.h
+@@ -10,6 +10,7 @@ struct sbi_pmp_ipi_info {
+   int type;
+   int rid;
+   uint8_t perm;
++  u32 source_hartindex;
+ };
+ 
+ #define SBI_PMP_IPI_INFO_SIZE sizeof(struct sbi_pmp_ipi_info)
+-- 
+2.34.1

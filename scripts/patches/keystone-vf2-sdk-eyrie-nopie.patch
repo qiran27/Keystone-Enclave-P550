@@ -1,0 +1,13 @@
+diff --git a/macros.cmake b/macros.cmake
+index 16d5893..821bb9f 100644
+--- a/macros.cmake
++++ b/macros.cmake
+@@ -121,6 +121,8 @@ macro(add_eyrie_runtime target_name plugins) # the files are passed via ${ARGN}
+     CMAKE_ARGS
+       "${PLUGIN_FLAGS}"
+       "-DCMAKE_C_FLAGS:STRING=${CMAKE_C_FLAGS}"
++      "-DCMAKE_ASM_FLAGS:STRING=${CMAKE_ASM_FLAGS}"
++      "-DCMAKE_EXE_LINKER_FLAGS:STRING=${CMAKE_EXE_LINKER_FLAGS}"
+       "-DEYRIE_SRCDIR=${KEYSTONE_EYRIE_RUNTIME}"
+       "-DKEYSTONE_SDK_DIR=${KEYSTONE_SDK_DIR}"
+     BUILD_IN_SOURCE TRUE

@@ -1,0 +1,60 @@
+diff --git a/attestation/CMakeLists.txt b/attestation/CMakeLists.txt
+index 6ead22b..5134d96 100644
+--- a/attestation/CMakeLists.txt
++++ b/attestation/CMakeLists.txt
+@@ -10,11 +10,12 @@ if(NOT DEFINED fw_bin)
+    set(fw_bin ../../../images/fw_jump.bin)
+ endif()
+ get_filename_component(fw_file ${fw_bin} NAME)
+-set(package_script "./attestor-runner attestor eyrie-rt loader.bin --sm-bin ${fw_file}")
++set(package_script "./attestor-runner attestor eyrie-rt loader.bin --freemem-size 1024 --sm-bin ${fw_file}")
+ 
+ # eapp
+ 
+ add_executable(${eapp_bin} ${eapp_src})
++target_link_options(${eapp_bin} PRIVATE "-Wl,-e,main")
+ target_link_libraries(${eapp_bin} "-nostdlib -static" ${KEYSTONE_LIB_EAPP} ${KEYSTONE_LIB_EDGE})
+ target_include_directories(${eapp_bin}
+   PUBLIC ${KEYSTONE_SDK_DIR}/include/app
+@@ -48,7 +49,7 @@ if(NOT DEFINED fw_bin)
+ endif()
+ 
+ get_filename_component(fw_file ${fw_bin} NAME)
+-set(package_script "./attestor-runner attestor eyrie-rt loader.bin --sm-bin ${fw_file}")
++set(package_script "./attestor-runner attestor eyrie-rt loader.bin --freemem-size 1024 --sm-bin ${fw_file}")
+ 
+ # add target for packaging (see keystone.cmake)
+ 
+diff --git a/attestation/host/verifier.cpp b/attestation/host/verifier.cpp
+index 513ab07..77fb2cc 100644
+--- a/attestation/host/verifier.cpp
++++ b/attestation/host/verifier.cpp
+@@ -87,7 +87,11 @@ Verifier::compute_expected_sm_hash(byte* expected_sm_hash) {
+   // measuring is the same as the size of the SM buffer allocated by
+   // the bootloader. See keystone/bootrom/bootloader.c for how it is
+   // computed in the bootloader.
+-  const size_t sanctum_sm_size = 0x1ff000;
++  // On P550 the SM is integrated into OpenSBI, which has executed before its
++  // platform hook can initialize attestation. Measure the immutable RX
++  // region (_fw_start.._fw_rw_start), not the already-mutated data/BSS area.
++  // The pinned OpenSBI 1.6 link layout is asserted by the bootchain builder.
++  const size_t sanctum_sm_size = 0x40000;
+   std::vector<byte> sm_content(sanctum_sm_size, 0);
+ 
+   {
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 8173fea..45894f6 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -75,9 +75,9 @@ foreach (test IN ITEMS ${all_test_bins})
+   file(APPEND ${test_script_tmp} "echo 'testing ${test}'\n")
+   if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${test}/retval)
+     execute_process(COMMAND cat ${CMAKE_CURRENT_SOURCE_DIR}/${test}/retval OUTPUT_VARIABLE retval)
+-    file(APPEND ${test_script_tmp} "./${host_bin} ${test} eyrie-rt loader.bin --retval ${retval}")
++    file(APPEND ${test_script_tmp} "./${host_bin} ${test} eyrie-rt loader.bin --freemem-size 1024 --retval ${retval}")
+   else()
+-    file(APPEND ${test_script_tmp} "./${host_bin} ${test} eyrie-rt loader.bin\n")
++    file(APPEND ${test_script_tmp} "./${host_bin} ${test} eyrie-rt loader.bin --freemem-size 1024\n")
+   endif()
+ endforeach(test)
+ 

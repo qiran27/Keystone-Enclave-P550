@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000008 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Sat, 22 Aug 2026 00:00:00 +0800
+Subject: [PATCH] sm: permit rdcycle only in the enclave context
+
+The P550 Ubuntu kernel clears scounteren.CY, so copying the host value into a
+new enclave makes Keystone's unmodified test-fib-bench trap forever on its
+first rdcycle. Give the enclave context access to the architectural cycle
+counter expected by the official example. The normal context swap restores
+Linux's original scounteren value when returning to the host.
+
+This changes only the separately saved enclave S-mode CSR state; it does not
+enable rdcycle for Ubuntu userspace. mcounteren.CY is already enabled by
+OpenSBI during hart initialization.
+
+Upstream-Status: Inappropriate [P550 Linux counter-access policy]
+---
+ src/thread.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/thread.c b/src/thread.c
+index a13ad82..a45ceab 100644
+--- a/src/thread.c
++++ b/src/thread.c
+@@ -107,8 +107,11 @@ void clean_smode_csrs(struct thread_state* state){
+ 
+   state->prev_csrs.sie = 0;
+   state->prev_csrs.stvec = 0;
+-  // For now we take whatever the OS was doing
+-  state->prev_csrs.scounteren = csr_read(scounteren);
++  /*
++   * The official fib-bench enclave reads cycle from U-mode. Linux keeps
++   * host U-mode counter access disabled, so grant CY only to the enclave.
++   */
++  state->prev_csrs.scounteren = 1UL;
+   state->prev_csrs.sscratch = 0;
+   state->prev_csrs.sepc = 0;
+   state->prev_csrs.scause = 0;
+-- 
+2.34.1

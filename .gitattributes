@@ -1,0 +1,14 @@
+* text=auto
+
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.bb text eol=lf
+*.bbappend text eol=lf
+*.conf text eol=lf
+*.patch text eol=lf whitespace=-trailing-space,-space-before-tab
+
+# Git records these as symbolic links in their own source repositories. They
+# are downloaded on Linux and are deliberately not embedded in this repo.

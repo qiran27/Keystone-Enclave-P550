@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000013 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Fri, 21 Aug 2026 00:00:00 +0800
+Subject: [PATCH] lib: sbi: hand P550 PMP ownership back to Keystone
+
+The EIC770X platform final-init hook initializes Keystone before OpenSBI 1.6
+programs Domain0 PMP entries.  Restore the already-defined Keystone layout at
+the end of the standard PMP routine on cold boot, secondary-hart start, and
+warm resume.
+
+Upstream-Status: Inappropriate [P550 Keystone integration]
+---
+ lib/sbi/sbi_hart.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/lib/sbi/sbi_hart.c b/lib/sbi/sbi_hart.c
+index 8b4bebd..026c148 100644
+--- a/lib/sbi/sbi_hart.c
++++ b/lib/sbi/sbi_hart.c
+@@ -24,6 +24,10 @@
+ extern void __sbi_expected_trap(void);
+ extern void __sbi_expected_trap_hext(void);
+ 
++#ifdef BOARD_P550_TEST
++extern void sm_restore_pmp(void);
++#endif
++
+ void (*sbi_hart_expected_trap)(void) = &__sbi_expected_trap;
+ 
+ static unsigned long hart_features_offset;
+@@ -557,6 +561,10 @@ int sbi_hart_pmp_configure(struct sbi_scratch *scratch)
+ 		rc = sbi_hart_oldpmp_configure(scratch, pmp_count,
+ 						pmp_log2gran, pmp_addr_max);
+ 
++#ifdef BOARD_P550_TEST
++	if (!rc)
++		sm_restore_pmp();
++#endif
+ 	/*
+ 	 * As per section 3.7.2 of privileged specification v1.12,
+ 	 * virtual address translations can be speculatively performed
+-- 
+2.34.1

@@ -1,0 +1,58 @@
+header:
+  version: 14
+  includes:
+    - repo: freedom-u-sdk
+      file: scripts/kas/hifive-premier-p550.yml
+
+build_system: oe
+
+repos:
+  # This declaration lets kas fetch the repository before resolving the
+  # board configuration included above. The revision is the official
+  # 2025.11.00-HFP550 tag target.
+  freedom-u-sdk:
+    url: https://github.com/sifiveinc/freedom-u-sdk.git
+    commit: be64c2640d8e9eca69131c6cc7652c55ebde6824
+    layers:
+      .:
+
+  # No URL means this is the top-level local repository. Only the layer below
+  # is added to BBLAYERS; kas never mutates the project repository.
+  keystone-p550-system:
+    layers:
+      meta-keystone-p550:
+
+machine: hifive-premier-p550
+distro: freedom-u-sdk-hf-premier-p550
+
+target:
+  # The Ubuntu root filesystem is downloaded as an official prebuilt image.
+  # Yocto is retained only for the board-specific bootchain; it must not build
+  # demo-coreip-cli/XFCE or another complete root filesystem.
+  - bootchain
+
+local_conf_header:
+  keystone-p550-layout: |
+    # TOPDIR is /home/<user>/keystone-p550-system/build as selected by the
+    # wrapper. Deriving cache paths from it is deterministic and does not rely
+    # on kas forwarding shell environment variables into BitBake.
+    DL_DIR = "${TOPDIR}/../downloads"
+    SSTATE_DIR = "${TOPDIR}/../sstate-cache"
+
+  keystone-p550-stage: |
+    # This enables the VF2-source-based P550 integration build. It remains a
+    # hardware-validation image until all gates in docs/PORTING.md pass.
+    KEYSTONE_P550_STAGE = "sm-integration-test"
+    KEYSTONE_P550_SM_ENABLED = "1"
+
+  keystone-p550-host-limits: |
+    # Leave headroom on the reference 8-vCPU/16-GiB Ubuntu VM while still
+    # keeping the cores busy during large GCC and LLVM builds.
+    BB_NUMBER_THREADS = "6"
+    PARALLEL_MAKE = "-j 6"
+
+  keystone-p550-fetch-reliability: |
+    # Retry transient DNS, connection and HTTP failures before BitBake marks a
+    # source task failed. kas-build.sh additionally retries the complete fetch
+    # task graph before compilation begins.
+    FETCHCMD_wget = "/usr/bin/env wget -t 5 -T 120 --retry-connrefused --waitretry=5"

@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000019 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Sat, 22 Aug 2026 00:00:00 +0800
+Subject: [PATCH] sm: use the native OpenSBI 1.6 trap entry for enclaves
+
+The VF2 monitor's copied trap.S targets an older OpenSBI trap-frame ABI and
+locks a P550 hart when installed as mtvec. Keep mtvec on OpenSBI 1.6's native
+_trap_handler, which owns the exact struct sbi_trap_context assembly ABI.
+Dispatch to Keystone's C handler while the current hart is in enclave context;
+the handler updates that same context with the enclave or restored host state.
+
+Upstream-Status: Inappropriate [P550/OpenSBI 1.6 integration]
+---
+ lib/sbi/sbi_trap.c       | 12 ++++++++++++
+ keystone-sm/src/thread.c |  2 +-
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/lib/sbi/sbi_trap.c b/lib/sbi/sbi_trap.c
+index 9b7e0b8..9cef840 100644
+--- a/lib/sbi/sbi_trap.c
++++ b/lib/sbi/sbi_trap.c
+@@ -25,0 +26,5 @@
++
++#ifdef BOARD_P550_TEST
++extern int cpu_is_enclave_context(void);
++extern void sbi_trap_handler_keystone_enclave(struct sbi_trap_context *tcntx);
++#endif
+@@ -299,6 +304,13 @@ struct sbi_trap_context *sbi_trap_handler(struct sbi_trap_context *tcntx)
+  */
+ struct sbi_trap_context *sbi_trap_handler(struct sbi_trap_context *tcntx)
+ {
++#ifdef BOARD_P550_TEST
++	if (cpu_is_enclave_context()) {
++		sbi_trap_handler_keystone_enclave(tcntx);
++		return tcntx;
++	}
++#endif
++
+ 	int rc = SBI_ENOTSUPP;
+ 	const char *msg = "trap handler failed";
+ 	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
+diff --git a/keystone-sm/src/thread.c b/keystone-sm/src/thread.c
+index f83efca..ae69814 100644
+--- a/keystone-sm/src/thread.c
++++ b/keystone-sm/src/thread.c
+@@ -7,7 +7,7 @@
+ #include "thread.h"
+ 
+ void switch_vector_enclave(void){
+-  csr_write(mtvec, &trap_vector_enclave);
++  csr_write(mtvec, &_trap_handler);
+ }
+ 
+ void switch_vector_host(void){
+-- 
+2.34.1

@@ -1,0 +1,193 @@
+--- a/src/ipi.c
++++ b/src/ipi.c
+@@ -1,32 +1,106 @@
+-#include <sbi/sbi_fifo.h>
+ #include <sbi/sbi_ipi.h>
+ #include <sbi/sbi_scratch.h>
+-#include <sbi/sbi_platform.h>
+-#include <sbi/sbi_console.h>
+-#include <sbi/sbi_hsm.h>
+-#include <sbi/sbi_domain.h>
++#include <sbi/sbi_error.h>
++#include <sbi/riscv_atomic.h>
++#include <sbi/riscv_barrier.h>
++#include <sbi/riscv_locks.h>
+ #include "ipi.h"
+ #include "pmp.h"
+ 
+-void sbi_pmp_ipi_local_update(struct sbi_tlb_info *__info)
++/*
++ * OpenSBI 1.6 no longer embeds arbitrary callbacks in sbi_tlb_info.  PMP
++ * updates therefore use a dedicated IPI event.  The lock makes the shared
++ * command single-writer while the acknowledgement count keeps the sender
++ * from returning until every remote HART has programmed its PMP entries.
++ */
++static spinlock_t pmp_ipi_lock = SPIN_LOCK_INITIALIZER;
++static atomic_t pmp_ipi_pending = ATOMIC_INITIALIZER(0);
++static struct sbi_pmp_ipi_info pmp_ipi_command;
++static u32 pmp_ipi_event = SBI_IPI_EVENT_MAX;
++
++static void sbi_pmp_ipi_local_update(const struct sbi_pmp_ipi_info *info)
+ {
+-  struct sbi_pmp_ipi_info* info = (struct sbi_pmp_ipi_info *) __info;
+   if (info->type == SBI_PMP_IPI_TYPE_SET) {
+-    pmp_set_keystone(info->rid, (uint8_t) info->perm);
++    pmp_set_keystone(info->rid, info->perm);
+   } else {
+     pmp_unset(info->rid);
+   }
+ }
+ 
+-void send_and_sync_pmp_ipi(int region_idx, int type, uint8_t perm)
++static int pmp_ipi_update(struct sbi_scratch *scratch,
++                          struct sbi_scratch *remote_scratch,
++                          u32 remote_hartindex, void *data)
+ {
+-  ulong mask = 0;
+-  ulong source_hart = current_hartid();
+-  struct sbi_tlb_info tlb_info;
+-  sbi_hsm_hart_interruptible_mask(sbi_domain_thishart_ptr(), 0, &mask);
++  const struct sbi_pmp_ipi_info *info = data;
+ 
+-  SBI_TLB_INFO_INIT(&tlb_info, type, 0, region_idx, perm,
+-      sbi_pmp_ipi_local_update, source_hart);
+-  sbi_tlb_request(mask, 0, &tlb_info);
++  (void) remote_hartindex;
++  if (scratch == remote_scratch) {
++    sbi_pmp_ipi_local_update(info);
++    return SBI_IPI_UPDATE_BREAK;
++  }
++
++  atomic_add_return(&pmp_ipi_pending, 1);
++  return SBI_IPI_UPDATE_SUCCESS;
++}
++
++static void pmp_ipi_process(struct sbi_scratch *scratch)
++{
++  (void) scratch;
++  smp_rmb();
++  sbi_pmp_ipi_local_update(&pmp_ipi_command);
++  smp_wmb();
++  atomic_sub_return(&pmp_ipi_pending, 1);
++}
++
++static void pmp_ipi_sync(struct sbi_scratch *scratch)
++{
++  (void) scratch;
++  while (atomic_read(&pmp_ipi_pending))
++    cpu_relax();
++  smp_rmb();
++}
++
++static const struct sbi_ipi_event_ops pmp_ipi_ops = {
++  .name = "IPI_KEYSTONE_PMP",
++  .update = pmp_ipi_update,
++  .sync = pmp_ipi_sync,
++  .process = pmp_ipi_process,
++};
++
++int sbi_pmp_ipi_init(bool cold_boot)
++{
++  int event;
++
++  if (!cold_boot)
++    return pmp_ipi_event == SBI_IPI_EVENT_MAX ? SBI_ENODEV : 0;
++
++  atomic_write(&pmp_ipi_pending, 0);
++  event = sbi_ipi_event_create(&pmp_ipi_ops);
++  if (event < 0)
++    return event;
++
++  pmp_ipi_event = event;
++  return 0;
++}
++
++int send_and_sync_pmp_ipi(int region_idx, int type, uint8_t perm)
++{
++  int rc;
++
++  if (pmp_ipi_event == SBI_IPI_EVENT_MAX)
++    return SBI_ENODEV;
++
++  spin_lock(&pmp_ipi_lock);
++  pmp_ipi_command.type = type;
++  pmp_ipi_command.rid = region_idx;
++  pmp_ipi_command.perm = perm;
++  atomic_write(&pmp_ipi_pending, 0);
++  smp_wmb();
++
++  /* hbase == -1 selects all interruptible HARTs in the current domain. */
++  rc = sbi_ipi_send_many(0, -1UL, pmp_ipi_event, &pmp_ipi_command);
++  spin_unlock(&pmp_ipi_lock);
++
++  return rc;
+ }
+ 
+--- a/src/ipi.h
++++ b/src/ipi.h
+@@ -2,26 +2,19 @@
+ #define __PMP_IPI_H__
+ 
+ #include <sbi/sbi_scratch.h>
+-#include <sbi/sbi_hartmask.h>
+-#include <sbi/sbi_tlb.h>
+ 
+ #define SBI_PMP_IPI_TYPE_SET    0
+ #define SBI_PMP_IPI_TYPE_UNSET  1
+ 
+ struct sbi_pmp_ipi_info {
+-  unsigned long type;
+-  unsigned long __dummy;
+-  unsigned long rid;
+-  unsigned long perm;
++  int type;
++  int rid;
++  uint8_t perm;
+ };
+ 
+-void sbi_pmp_ipi_local_update(struct sbi_tlb_info *info);
+-
+ #define SBI_PMP_IPI_INFO_SIZE sizeof(struct sbi_pmp_ipi_info)
+ 
+-int sbi_pmp_ipi_init(struct sbi_scratch* scratch, bool cold_boot);
+-
+-int sbi_pmp_ipi_request(ulong hmask, ulong hbase, struct sbi_pmp_ipi_info* info);
++int sbi_pmp_ipi_init(bool cold_boot);
+ 
+-void send_and_sync_pmp_ipi(int region_idx, int type, uint8_t perm);
++int send_and_sync_pmp_ipi(int region_idx, int type, uint8_t perm);
+ #endif
+--- a/src/pmp.c
++++ b/src/pmp.c
+@@ -205,7 +205,8 @@ int pmp_unset_global(int region_idx)
+   if(!is_pmp_region_valid(region_idx))
+     PMP_ERROR(SBI_ERR_SM_PMP_REGION_INVALID, "Invalid PMP region index");
+ 
+-  send_and_sync_pmp_ipi(region_idx, SBI_PMP_IPI_TYPE_UNSET, PMP_NO_PERM);
++  if(send_and_sync_pmp_ipi(region_idx, SBI_PMP_IPI_TYPE_UNSET, PMP_NO_PERM))
++    PMP_ERROR(SBI_ERR_SM_ENCLAVE_PMP_FAILURE, "PMP IPI update failed");
+ 
+   return SBI_ERR_SM_PMP_SUCCESS;
+ }
+@@ -216,7 +217,8 @@ int pmp_set_global(int region_idx, uint8_t perm)
+   if(!is_pmp_region_valid(region_idx))
+     PMP_ERROR(SBI_ERR_SM_PMP_REGION_INVALID, "Invalid PMP region index");
+ 
+-  send_and_sync_pmp_ipi(region_idx, SBI_PMP_IPI_TYPE_SET, perm);
++  if(send_and_sync_pmp_ipi(region_idx, SBI_PMP_IPI_TYPE_SET, perm))
++    PMP_ERROR(SBI_ERR_SM_ENCLAVE_PMP_FAILURE, "PMP IPI update failed");
+ 
+   return SBI_ERR_SM_PMP_SUCCESS;
+ }
+--- a/src/sm.c
++++ b/src/sm.c
+@@ -118,4 +118,9 @@
+ void sm_init(bool cold_boot)
+ {
++  if (sbi_pmp_ipi_init(cold_boot)) {
++    sbi_printf("[SM] intolerable error - failed to initialize PMP IPI");
++    sbi_hart_hang();
++  }
++
+ 	// initialize SMM
+   if (cold_boot) {

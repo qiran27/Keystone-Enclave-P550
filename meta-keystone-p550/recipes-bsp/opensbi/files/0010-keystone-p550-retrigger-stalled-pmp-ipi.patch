@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000010 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Sun, 23 Aug 2026 00:00:00 +0800
+Subject: [PATCH] sm: retrigger stalled EIC7700 PMP IPIs
+
+Keystone must not return an EPM page to Linux until every hart has removed
+the corresponding PMP entry.  A lost machine-software interrupt currently
+leaves the source hart spinning forever in M-mode even though the destination
+FIFO and OpenSBI event bit still contain the request.
+
+After a 10 ms lack of completion, inspect the per-hart PMP FIFOs and retrigger
+only destinations which still have queued work.  The event remains owned and
+processed by OpenSBI's normal IPI path; this is a hardware-delivery retry, not
+a second PMP operation.  Emit a rate-limited marker so hardware validation can
+confirm whether a retry was required.
+
+Upstream-Status: Inappropriate [EIC7700 P550 platform workaround]
+---
+ src/ipi.c | 42 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/src/ipi.c b/src/ipi.c
+index 39b60ac..450414a 100644
+--- a/src/ipi.c
++++ b/src/ipi.c
+@@ -4,8 +4,11 @@
+ #include <sbi/sbi_error.h>
+ #include <sbi/sbi_fifo.h>
+ #include <sbi/sbi_heap.h>
++#include <sbi/sbi_platform.h>
++#include <sbi/sbi_console.h>
+ #include <sbi/riscv_atomic.h>
+ #include <sbi/riscv_barrier.h>
++#include <sbi/sbi_timer.h>
+ #include "ipi.h"
+ #include "pmp.h"
+ 
+@@ -62,8 +65,47 @@ static void pmp_ipi_sync(struct sbi_scratch *scratch)
+   atomic_t *sync = sbi_scratch_offset_ptr(scratch, pmp_ipi_sync_off);
++  const struct sbi_timer_device *timer = sbi_timer_get_device();
++  const struct sbi_platform *platform = sbi_platform_ptr(scratch);
++  u64 retry_ticks = timer && timer->timer_freq ? timer->timer_freq / 100 : 0;
++  u64 last_retry = sbi_timer_value();
++  unsigned long retries = 0;
+ 
+   while (atomic_read(sync) > 0) {
+     /* Service an inbound PMP request while waiting to avoid AB/BA deadlock. */
+     if (!pmp_ipi_process_once(scratch))
+       cpu_relax();
++
++    if (retry_ticks && sbi_timer_value() - last_retry >= retry_ticks) {
++      struct sbi_scratch *remote_scratch;
++      struct sbi_fifo *remote_fifo;
++      u32 remote_hartindex;
++      u16 queued;
++
++      last_retry = sbi_timer_value();
++      retries++;
++      for (remote_hartindex = 0;
++           remote_hartindex < sbi_platform_hart_count(platform);
++           remote_hartindex++) {
++        remote_scratch = sbi_hartindex_to_scratch(remote_hartindex);
++        if (!remote_scratch || remote_scratch == scratch)
++          continue;
++
++        remote_fifo = sbi_scratch_offset_ptr(remote_scratch,
++                                             pmp_ipi_fifo_off);
++        queued = sbi_fifo_avail(remote_fifo);
++        if (!queued)
++          continue;
++
++        /*
++         * sbi_ipi_send() already published the event bit.  Reassert only
++         * the raw interrupt so the normal OpenSBI handler drains the FIFO.
++         */
++        sbi_ipi_raw_send(remote_hartindex);
++        if (retries == 1 || !(retries % 100))
++          sbi_printf("[KS-P550-PMP-IPI-RETRY] source=%lu target=%u queued=%u pending=%ld retries=%lu\n",
++                     current_hartindex(), remote_hartindex,
++                     (unsigned int)queued,
++                     atomic_read(sync), retries);
++      }
++    }
+   }
+ }
+
+-- 
+2.34.1

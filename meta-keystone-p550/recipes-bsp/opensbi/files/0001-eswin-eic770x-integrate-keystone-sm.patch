@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Thu, 20 Aug 2026 00:00:00 +0800
+Subject: [PATCH] platform: eswin: integrate Keystone SM
+
+Compile the Keystone SM from the pinned VF2 source tree as part of the EIC770x
+platform and initialize it on every hart from the platform final-init hook.
+
+Upstream-Status: Inappropriate [board integration]
+---
+ platform/eswin/eic770x/objects.mk | 15 +++++++++++++++
+ platform/eswin/eic770x/platform.c |  3 +++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/platform/eswin/eic770x/objects.mk b/platform/eswin/eic770x/objects.mk
+index 8535107..8e7e21f 100644
+--- a/platform/eswin/eic770x/objects.mk
++++ b/platform/eswin/eic770x/objects.mk
+@@ -9,15 +9,30 @@
+ #
+ 
+ platform-objs-$(CONFIG_PLATFORM_ESWIN) += platform.o
+ platform-objs-y += eic770x_uart.o
++
++ifeq ($(KEYSTONE_SM),)
++$(error KEYSTONE_SM is required for the P550 Keystone build)
++endif
++ifeq ($(KEYSTONE_SDK_DIR),)
++$(error KEYSTONE_SDK_DIR is required for the P550 Keystone build)
++endif
++
++include $(KEYSTONE_SM)/src/objects.mk
++keystone-sm-sources := $(filter-out platform/%/platform.c,$(keystone-sm-sources))
++platform-objs-y += $(addprefix ../../../keystone-sm/src/,$(subst .c,.o,$(keystone-sm-sources)))
++platform-objs-y += ../../../keystone-sm/src/platform/p550/platform.o
++platform-genflags-y += "-DTARGET_PLATFORM_HEADER=\"platform/p550/platform.h\""
++platform-genflags-y += -DBOARD_P550_TEST
+ 
+ # Compiler flags
+ platform-cppflags-y =
+ platform-cflags-y =
+ platform-asflags-y =
+ platform-ldflags-y = -fno-stack-protector
++platform-cflags-y += -I$(KEYSTONE_SM)/src -I$(KEYSTONE_SDK_DIR)/include/shared
+ 
+ # Command for platform specific "make run"
+ 
+ # Blobs to build
+ FW_DYNAMIC=y
+diff --git a/platform/eswin/eic770x/platform.c b/platform/eswin/eic770x/platform.c
+index 922d45c..c505270 100644
+--- a/platform/eswin/eic770x/platform.c
++++ b/platform/eswin/eic770x/platform.c
+@@ -26,10 +26,11 @@
+ #include <sbi_utils/fdt/fdt_pmu.h>
+ #include <sbi_utils/fdt/fdt_helper.h>
+ #include <sbi/riscv_asm.h>
+ #include <sbi_utils/fdt/fdt_fixup.h>
+ #include <sbi/sbi_hart.h>
++#include "sm.h"
+ #include "eic770x_uart.h"
+ 
+ /* clang-format off */
+ #define EIC770X_HART_COUNT				4
+ #define DIE_REG_OFFSET					0
+@@ -235,10 +236,12 @@ static int eic770x_early_init(bool cold_boot)
+ 
+ static int eic770x_final_init(bool cold_boot)
+ {
+ 	void *fdt;
+ 
++	sm_init(cold_boot);
++
+ 	if (!cold_boot)
+ 		return 0;
+ 
+ 	fdt = sbi_scratch_thishart_arg1_ptr();
+ 	eic770x_modify_dt(fdt);
+-- 
+2.34.1

@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000006 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Fri, 21 Aug 2026 00:00:00 +0800
+Subject: [PATCH] sm: process IRQ sources and return host state once
+
+The VF2 SM's timer and software-interrupt paths were written when
+sbi_sm_stop_enclave() ended in the non-returning sbi_trap_exit(). The
+OpenSBI 1.6 port returns normally after replacing the trap register context,
+which made the legacy post-call assignments reachable.
+
+sbi_sm_stop_enclave() already returns SBI_ERR_SM_ENCLAVE_INTERRUPTED in a0
+and advances the restored host mepc past its RUN/RESUME ecall. Updating a0
+again is redundant, while advancing mepc a second time skips one Linux
+instruction and corrupts the observed sbiret value. Keep the pre-call mepc
+adjustment because it compensates for the increment performed when the
+enclave is subsequently resumed.
+
+Use the OpenSBI 1.6 timer and IPI handlers after restoring host context.
+Processing an IRQ before sbi_sm_stop_enclave() sets STIP/SSIP and then the
+Keystone S-mode CSR swap saves that host interrupt as enclave state. Every
+RESUME consequently restores the stale pending bit and immediately retraps.
+Restore the host first, then publish its pending interrupt. Clearing MIP_MTIP
+directly also does not acknowledge the platform timer source.
+
+Upstream-Status: Inappropriate [VF2 compatibility for OpenSBI 1.6]
+---
+ src/sbi_trap_hack.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/src/sbi_trap_hack.c b/src/sbi_trap_hack.c
+index c392a3d..72742c8 100644
+--- a/src/sbi_trap_hack.c
++++ b/src/sbi_trap_hack.c
+@@ -100,15 +100,13 @@ void sbi_trap_handler_keystone_enclave(struct sbi_trap_context *tcntx)
+		case IRQ_M_TIMER: {
+       regs->mepc -= 4;
+       sbi_sm_stop_enclave(regs, STOP_TIMER_INTERRUPT);
++      sbi_timer_process();
+-      regs->a0 = SBI_ERR_SM_ENCLAVE_INTERRUPTED;
+-      regs->mepc += 4;
+ 			break;
+                       }
+		case IRQ_M_SOFT: {
+       regs->mepc -= 4;
+       sbi_sm_stop_enclave(regs, STOP_TIMER_INTERRUPT);
++      sbi_ipi_process();
+-      regs->a0 = SBI_ERR_SM_ENCLAVE_INTERRUPTED;
+-      regs->mepc += 4;
+ 			break;
+                      }
+ 		default:
+-- 
+2.34.1

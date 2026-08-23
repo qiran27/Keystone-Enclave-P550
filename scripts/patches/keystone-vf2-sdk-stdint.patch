@@ -1,0 +1,30 @@
+diff --git a/include/shared/sm_call.h b/include/shared/sm_call.h
+index 35011fc..b3afc7a 100644
+--- a/include/shared/sm_call.h
++++ b/include/shared/sm_call.h
+@@ -1,6 +1,13 @@
+ #ifndef __SM_CALL_H__
+ #define __SM_CALL_H__
+ 
++#ifdef __KERNEL__
++#include <linux/types.h>
++#else
++#include <stddef.h>
++#include <stdint.h>
++#endif
++
+ // BKE (Berkeley Keystone Enclave)
+ #define SBI_EXT_EXPERIMENTAL_KEYSTONE_ENCLAVE 0x08424b45
+ 
+diff --git a/include/host/Params.hpp b/include/host/Params.hpp
+index a95a47c..e5b871a 100644
+--- a/include/host/Params.hpp
++++ b/include/host/Params.hpp
+@@ -5,6 +5,7 @@
+ #pragma once
+ 
+ #include <cstdio>
++#include <stdint.h>
+ 
+ #if __riscv_xlen == 64
+ #define DEFAULT_FREEMEM_SIZE 1024 * 1024  // 1 MB

@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000022 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Sat, 22 Aug 2026 00:00:00 +0800
+Subject: [PATCH] lib: sbi: keep P550 PMP entries owned by Keystone
+
+The standard OpenSBI domain PMP pass runs after the EIC770X final-init hook.
+For regions with ENF_PERMISSIONS it sets PMP_L.  Once locked, those entries
+cannot be rewritten until reset, so Keystone cannot grant execute permission
+to a dynamically allocated EPM and the loader faults on its first fetch.
+
+On the Keystone P550 build, bypass that second domain layout and restore the
+monitor-owned layout instead.  The monitor layout protects OpenSBI, the two
+vendor DRAM holes and ACLINT while retaining unlocked entries for EPM/UTM.
+
+Upstream-Status: Inappropriate [P550 Keystone integration]
+---
+ lib/sbi/sbi_hart.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/lib/sbi/sbi_hart.c b/lib/sbi/sbi_hart.c
+index 026c148..3f8f255 100644
+--- a/lib/sbi/sbi_hart.c
++++ b/lib/sbi/sbi_hart.c
+@@ -540,6 +540,17 @@ int sbi_hart_pmp_configure(struct sbi_scratch *scratch)
+ 	unsigned int pmp_count = sbi_hart_pmp_count(scratch);
+ 	unsigned long pmp_addr_max;
+ 
++#ifdef BOARD_P550_TEST
++	/*
++	 * sm_init() has already defined the complete P550 layout.  Do not let
++	 * OpenSBI replace it with PMP_L entries: Keystone must rewrite the EPM
++	 * and UTM entries on every enclave context switch.
++	 */
++	sm_restore_pmp();
++	__asm__ __volatile__("sfence.vma");
++	return 0;
++#endif
++
+ 	if (!pmp_count)
+ 		return 0;
+ 
+-- 
+2.34.1

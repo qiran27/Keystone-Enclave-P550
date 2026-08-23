@@ -1,0 +1,80 @@
+format: 1
+board: hifive-premier-p550
+release: 2025.11.00-HFP550
+components:
+  freedom-u-sdk:
+    url: https://github.com/sifiveinc/freedom-u-sdk.git
+    revision: be64c2640d8e9eca69131c6cc7652c55ebde6824
+    release_tag: 2025.11.00-HFP550
+  meta-sifive:
+    url: https://github.com/sifive/meta-sifive.git
+    revision: 098ca1765fdebdad5d09d62be9731bca73280274
+  bitbake:
+    url: https://git.openembedded.org/bitbake
+    revision: ff8cae735cf489373af1aac7ee233d7b82d483d3
+  openembedded-core:
+    url: https://git.openembedded.org/openembedded-core
+    revision: 4bea64347407dfb1eb46dacffd05af3bd200b419
+  meta-clang:
+    url: https://github.com/kraj/meta-clang.git
+    revision: 93dec321980091b8abfa1f7d72c50b844c63167c
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    revision: 6ef7d62a915981a40822f0c18b9c42be42950de0
+  meta-tensorflow-lite:
+    url: https://github.com/NobuoTsukamoto/meta-tensorflow-lite.git
+    revision: 4157590a68ee7d9ab0cccb1ed11dfde0665a7f1a
+  meta-virtualization:
+    url: https://git.yoctoproject.org/meta-virtualization
+    revision: 70790134547d8722a682cc1a2a4f4bc11ab8f110
+  pseudo:
+    url: https://git.yoctoproject.org/pseudo
+    revision: ba8887e5f1e922f866681ec7dec1a00b602a9328
+    version: 1.9.11
+  opensbi:
+    url: https://github.com/riscv-software-src/opensbi.git
+    revision: bd613dd92113f683052acfb23d9dc8ba60029e0a
+    version: '1.6'
+  linux:
+    url: https://github.com/sifive/riscv-linux.git
+    revision: 3340c5ae8c9d093fdf23ed8c68437846cac893b6
+    directory: riscv-linux
+    branch: rel/kernel-6.12/hifive-premier-p550
+    version: 6.12.33
+  yocto-kernel-cache:
+    url: https://git.yoctoproject.org/yocto-kernel-cache
+    revision: bc26c6c6b91fa0e4de4920544cc4aeeb3dedd894
+    branch: yocto-6.12
+  yocto-cfg-fragments-6.12:
+    url: https://git.yoctoproject.org/yocto-kernel-cache
+    revision: 38b941ae2f4f28c0ba40b2ba6da466f6f5fe3ba0
+    directory: yocto-kernel-cache
+    local_ref: pinned-yocto-cfg-fragments-6.12
+  u-boot:
+    url: https://github.com/eswincomputing/u-boot.git
+    revision: 6c8f710028e52709b29b70809131509f2edfb1e5
+    tag: EIC7X-2025.01
+  p550-tools-ddr:
+    url: https://github.com/sifive/hifive-premier-p550-tools.git
+    revision: 5c81fa1ccc38b63d4ef71292d4ff5f971f976f4d
+    directory: hifive-premier-p550-tools
+  p550-tools-second-boot:
+    url: https://github.com/sifive/hifive-premier-p550-tools.git
+    revision: 43ec142e5a9d95820b0a06e51863931229e6f71b
+    directory: hifive-premier-p550-tools
+    local_ref: pinned-second-boot
+  nsign:
+    url: https://github.com/eswincomputing/Esbd-77serial-nsign.git
+    revision: 0ec1fc15df7677ec70506cc3ca81c636a335c308
+  keystone-vf2:
+    url: https://github.com/its-valentinvp/keystone.git
+    revision: c5f7ac3977f50309ac816b54f470c4021573bf5e
+    directory: keystone-vf2
+    branch: vf2-support
+    purpose: source-baseline-for-sm-driver-sdk-runtime-and-examples
+  keystone-upstream-reference:
+    url: https://github.com/keystone-enclave/keystone.git
+    revision: 73aeab79b97f4cea3e418897841e5534fc978f4b
+    directory: keystone-upstream-reference
+    required: false
+    purpose: comparison-only

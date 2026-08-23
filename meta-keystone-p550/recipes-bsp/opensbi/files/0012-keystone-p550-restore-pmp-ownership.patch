@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000012 Mon Sep 17 00:00:00 2001
+From: Keystone P550 Integration <keystone-p550@example.invalid>
+Date: Fri, 21 Aug 2026 00:00:00 +0800
+Subject: [PATCH] sm: restore Keystone PMP ownership after OpenSBI setup
+
+OpenSBI 1.6 invokes the platform final-init hook before its final domain PMP
+configuration.  The P550 hook initializes Keystone in final-init, so OpenSBI
+subsequently overwrites the monitor's eight-entry PMP layout.  Expose an
+idempotent per-hart restore operation for a post-OpenSBI hook.
+
+Reserve the one remaining PMP entry for the complete EIC770X ACLINT window.
+The resulting fixed layout consumes entries 0-4 and 7, leaving entries 5 and
+6 for the enclave EPM and UTM.
+
+Upstream-Status: Inappropriate [P550/OpenSBI integration]
+---
+ src/sm.c                     | 21 ++++++++++++---------
+ src/sm.h                     |  1 +
+ 2 files changed, 13 insertions(+), 9 deletions(-)
+diff --git a/src/sm.c b/src/sm.c
+index 6a4ef73..ea773ae 100644
+--- a/src/sm.c
++++ b/src/sm.c
+@@ -160,21 +160,24 @@ void sm_init(bool cold_boot)
+   }
+ 
+   /* below are executed by all harts */
+-  pmp_init();
+-  pmp_set_keystone(sm_region_id, PMP_NO_PERM);
+-  pmp_set_keystone(os_region_id, PMP_ALL_PERM);
+-
+-  /* Fire platform specific global init */
+-  if (platform_init_global() != SBI_ERR_SM_ENCLAVE_SUCCESS) {
+-    sbi_printf("[SM] platform global init fatal error");
+-    sbi_hart_hang();
+-  }
++  sm_restore_pmp();
+ 
+   sbi_printf("[SM] Keystone security monitor has been initialized!\n");
+ 
+   sm_print_hash();
+ 
+   return;
+   // for debug
+   // sm_print_cert();
+ }
++
++void sm_restore_pmp(void)
++{
++  pmp_init();
++  pmp_set_keystone(sm_region_id, PMP_NO_PERM);
++  pmp_set_keystone(os_region_id, PMP_ALL_PERM);
++  if (platform_init_global() != SBI_ERR_SM_ENCLAVE_SUCCESS) {
++    sbi_printf("[SM] platform global init fatal error");
++    sbi_hart_hang();
++  }
++}
+diff --git a/src/sm.h b/src/sm.h
+index 55161d4..91122de 100644
+--- a/src/sm.h
++++ b/src/sm.h
+@@ -15,6 +15,7 @@
+ #include "sm_err.h"
+ 
+ void sm_init(bool cold_boot);
++void sm_restore_pmp(void);
+ 
+ /* platform specific functions */
+ #define ATTESTATION_KEY_LENGTH  64
+-- 
+2.34.1
