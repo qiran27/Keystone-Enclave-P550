@@ -107,9 +107,9 @@ if (( ${#unexpected[@]} > 0 )); then
 fi
 
 echo "Files prepared for publication:"
-git diff --cached --name-status
+git --no-pager diff --cached --name-status
 echo
-git diff --cached --stat
+git --no-pager diff --cached --stat
 
 if [[ "${mode}" == "prepare" ]]; then
   echo

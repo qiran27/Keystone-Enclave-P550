@@ -8,6 +8,7 @@ artifact_dir="${project_dir}/artifacts/keystone"
 sdk_patch="${project_dir}/scripts/patches/keystone-vf2-sdk-stdint.patch"
 sdk_cmake_patch="${project_dir}/scripts/patches/keystone-vf2-sdk-eyrie-cmake-flags.patch"
 sdk_nopie_patch="${project_dir}/scripts/patches/keystone-vf2-sdk-eyrie-nopie.patch"
+driver_cleanup_patch="${project_dir}/scripts/patches/keystone-vf2-driver-finalize-cleanup.patch"
 examples_patch="${project_dir}/scripts/patches/keystone-vf2-examples-native-gcc.patch"
 examples_p550_patch="${project_dir}/scripts/patches/keystone-vf2-examples-p550.patch"
 sdk_source_dir="${work_dir}/sdk-src"
@@ -105,6 +106,10 @@ if [[ ! -f "${sdk_nopie_patch}" ]]; then
   echo "Missing SDK Eyrie non-PIE patch: ${sdk_nopie_patch}" >&2
   exit 9
 fi
+if [[ ! -f "${driver_cleanup_patch}" ]]; then
+  echo "Missing driver cleanup patch: ${driver_cleanup_patch}" >&2
+  exit 9
+fi
 actual_revision="$(git -C "${source_dir}" rev-parse HEAD)"
 if [[ "${actual_revision}" != "${vf2_revision}" ]]; then
   echo "Wrong Keystone VF2 revision: ${actual_revision}" >&2
@@ -115,6 +120,11 @@ sdk_fingerprint="$({
   sha256sum "${sdk_patch}" "${sdk_cmake_patch}" \
     "${sdk_nopie_patch}"
 } | sha256sum | awk '{print $1}')"
+driver_fingerprint="$({
+  printf '%s\n' "${vf2_revision}"
+  sha256sum "${driver_cleanup_patch}"
+} | sha256sum | awk '{print $1}')"
+driver_marker="${work_dir}/driver-src/.p550-driver-inputs.sha256"
 sm_bin="$(readlink -f "${sm_bin}")"
 if [[ ! -s "${sm_bin}" ]]; then
   echo "Missing Keystone SM reference image: ${sm_bin}" >&2
@@ -221,6 +231,11 @@ grep -Fqx '      "-DCMAKE_ASM_FLAGS:STRING=${CMAKE_ASM_FLAGS}"' \
 grep -Fqx '      "-DCMAKE_EXE_LINKER_FLAGS:STRING=${CMAKE_EXE_LINKER_FLAGS}"' \
   "${sdk_source_dir}/macros.cmake"
 
+sed -i 's/\r$//' "${work_dir}/driver-src/keystone-ioctl.c"
+apply_patch_once "${work_dir}/driver-src" "${driver_cleanup_patch}"
+grep -Fq 'Keep the partially initialized object alive' \
+  "${work_dir}/driver-src/keystone-ioctl.c"
+
 for examples_compat_file in \
   "${examples_source_dir}/hello-native/CMakeLists.txt" \
   "${examples_source_dir}/attestation/CMakeLists.txt" \
@@ -310,14 +325,21 @@ else
   build_sdk
 fi
 
-if (( resume )) && [[ -f "${work_dir}/driver-src/keystone-driver.ko" ]]; then
+if (( resume )) && \
+   [[ -f "${work_dir}/driver-src/keystone-driver.ko" ]] && \
+   [[ -f "${driver_marker}" ]] && \
+   [[ "$(cat "${driver_marker}")" == "${driver_fingerprint}" ]]; then
   echo "Reusing completed Keystone kernel module."
 else
+  if (( resume )); then
+    echo "Driver inputs changed; rebuilding the Keystone kernel module."
+  fi
   make -C "${kernel_build}" \
     M="${work_dir}/driver-src" \
     ARCH=riscv \
     KEYSTONE_SDK_DIR="${sdk_dir}" \
     modules
+  printf '%s\n' "${driver_fingerprint}" > "${driver_marker}"
 fi
 
 if (( resume )); then
@@ -407,7 +429,7 @@ rm -f -- "${payload_dir}/install-keystone-payload.sh" \
   "${payload_dir}/PAYLOAD-MANIFEST.txt"
 
 module_dir="${payload_dir}/rootfs/lib/modules/$(uname -r)/extra"
-example_dir="${payload_dir}/rootfs/usr/share/keystone/example"
+example_dir="${payload_dir}/rootfs/usr/share/keystone/examples"
 mkdir -p "${module_dir}" "${example_dir}" \
   "${payload_dir}/rootfs/usr/share/keystone" \
   "${payload_dir}/rootfs/etc/modules-load.d"
@@ -421,7 +443,6 @@ test -x "${example_dir}/hello.ke"
 test -x "${example_dir}/hello-native.ke"
 test -x "${example_dir}/attestor.ke"
 test -x "${example_dir}/tests.ke"
-ln -sfn example "${payload_dir}/rootfs/usr/share/keystone/examples"
 printf '%s\n' keystone-driver > \
   "${payload_dir}/rootfs/etc/modules-load.d/keystone.conf"
 
@@ -446,9 +467,14 @@ sudo install -D -m 0644 \
   "${payload_dir}/rootfs/etc/modules-load.d/keystone.conf" \
   /etc/modules-load.d/keystone.conf
 sudo mkdir -p /usr/share/keystone
-# Replace payloads produced before the canonical directory became singular.
-if [[ -d /usr/share/keystone/examples && \
-      ! -L /usr/share/keystone/examples ]]; then
+# Remove the incorrectly named directory/symlink produced by older payloads,
+# then install the canonical plural examples directory as a real directory.
+if [[ -L /usr/share/keystone/example || \
+      -d /usr/share/keystone/example ]]; then
+  sudo rm -rf -- /usr/share/keystone/example
+fi
+if [[ -L /usr/share/keystone/examples || \
+      -d /usr/share/keystone/examples ]]; then
   sudo rm -rf -- /usr/share/keystone/examples
 fi
 sudo cp -a "${payload_dir}/rootfs/usr/share/keystone/." \
@@ -457,7 +483,7 @@ sudo depmod -a
 sudo modprobe keystone-driver
 test -e /dev/keystone_enclave
 echo "Driver loaded and /dev/keystone_enclave exists."
-echo "Run /usr/share/keystone/example/hello.ke for the first enclave test."
+echo "Run /usr/share/keystone/examples/hello.ke for the first enclave test."
 EOF
 chmod 0755 "${payload_dir}/install-keystone-payload.sh"
 
@@ -471,6 +497,7 @@ sdk_eyrie_cmake_patch=keystone-vf2-sdk-eyrie-cmake-flags.patch
 sdk_eyrie_nopie_patch=keystone-vf2-sdk-eyrie-nopie.patch
 examples_compat_patch=keystone-vf2-examples-native-gcc.patch
 examples_p550_patch=keystone-vf2-examples-p550.patch
+driver_cleanup_patch=keystone-vf2-driver-finalize-cleanup.patch
 components=linux-keystone-driver,sdk,runtime,examples/hello,examples/hello-native,examples/attestation,examples/tests
 official_example_packages=hello.ke,hello-native.ke,attestor.ke,tests.ke
 attestation=test-only-known-key-no-device-root-key

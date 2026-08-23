@@ -28,6 +28,9 @@ userspace payload:
 The script refuses to substitute the official bootloader in Keystone mode.
 The official binary is suitable only for baseline boot and recovery because
 OpenSBI is part of that binary and does not contain the P550 Keystone SM.
+The custom bootloader directory must also contain its `fw_payload.bin` and
+`bootchain-manifest.txt`; these are copied into the bundle for attestation and
+release traceability.
 
 ## U-Boot commands
 
@@ -75,3 +78,13 @@ module directory, installs the userspace files without replacing Ubuntu's
 merged-`/usr` `/lib` symlink, runs `depmod`, loads `keystone-driver`, and
 requires `/dev/keystone_enclave` to appear. Continue with
 `docs/VALIDATION.md`.
+
+After installation, all official packages are available directly in:
+
+```bash
+cd /usr/share/keystone/examples
+sudo ./hello.ke
+sudo ./hello-native.ke
+sudo ./attestor.ke
+sudo ./tests.ke
+```

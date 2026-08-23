@@ -9,6 +9,10 @@
 *.bbappend text eol=lf
 *.conf text eol=lf
 *.patch text eol=lf whitespace=-trailing-space,-space-before-tab
+*.c text eol=lf
+*.h text eol=lf
+*.cpp text eol=lf
+*.S text eol=lf
 
 # Git records these as symbolic links in their own source repositories. They
 # are downloaded on Linux and are deliberately not embedded in this repo.
