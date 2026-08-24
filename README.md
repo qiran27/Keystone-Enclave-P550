@@ -381,3 +381,8 @@ uploads only the bootchain, payload and manifests. It does not upload the
 official Ubuntu image; end users obtain that pinned image from SiFive through
 `./fetch-release-assets.sh all`. The complete maintainer checklist is in
 `docs/RELEASING.md`.
+
+## Author
+
+- Name: wuju
+- Email: 2813480370@qq.com
