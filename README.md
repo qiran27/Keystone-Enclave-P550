@@ -466,13 +466,30 @@ Publish the new integrated Keystone + ESWIN cipher image as a separate Release:
 ./publish-release-assets.sh eswin p550-keystone-eswin-cipher-2026.08.25
 ```
 
+If the build VM cannot reach GitHub reliably but the Windows host has an HTTP
+proxy on `127.0.0.1:7890`, expose it to the VM without enabling LAN access on
+the proxy. Keep this command running on Windows:
+
+```bash
+ssh -N -R 17890:127.0.0.1:7890 BUILD_USER@BUILD_VM
+```
+
+Then publish from the build VM through that tunnel:
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:17890
+./publish-release-assets.sh eswin p550-keystone-eswin-cipher-2026.08.25
+```
+
 The ESWIN mode verifies `artifacts/eswin-cipher/SHA256SUMS`, compresses the
 8 GiB raw image with xz, and uploads the compressed image, bootloader, manifest
 and download checksums. GitHub requires each Release asset to be smaller than
 2 GiB, so the script automatically creates 1900 MiB `.part-*` files if the
 compressed image is still too large. If
 `artifacts/eswin-cipher/eswin-cipher-speed-results.csv` exists, it is included
-as hardware-validation evidence.
+as hardware-validation evidence. Uploads are first stored in a draft Release;
+if a connection fails, rerunning the same command skips assets whose remote
+size already matches and resumes the remaining upload before publishing it.
 
 Download and reconstruct an integrated-image Release with:
 

@@ -133,8 +133,12 @@ publish_eswin() {
   local max_asset_bytes=$((2 * 1024 * 1024 * 1024))
   local part_bytes=$((1900 * 1024 * 1024))
   local compressed_size release_file
+  local release_api_url release_is_draft release_name release_size remote_line
   local release_files=()
   local release_names=()
+  local release_title="Keystone + ESWIN cipher on HiFive Premier P550 ${tag}"
+  local release_notes="Integrated SiFive Ubuntu 2025.11.00 image for HiFive Premier P550 with the hardware-validated Keystone bootchain/payload and ESWIN SCPU cipher support. Verify DOWNLOAD-SHA256SUMS first. If the image is split, concatenate the .part-* files in lexical order, then run xz -d and verify SHA256SUMS before flashing."
+  declare -A remote_sizes=()
 
   for release_file in \
     "${image_path}" \
@@ -203,11 +207,44 @@ publish_eswin() {
     release_names+=("$(basename "${release_file}")")
   done < <(find "${stage_dir}" -maxdepth 1 -type f -print0 | sort -z)
 
-  check_new_release
   confirm_release "${tag}" "${release_names[@]}"
-  gh release create "${tag}" "${release_files[@]}" \
-    --title "Keystone + ESWIN cipher on HiFive Premier P550 ${tag}" \
-    --notes "Integrated SiFive Ubuntu 2025.11.00 image for HiFive Premier P550 with the hardware-validated Keystone bootchain/payload and ESWIN SCPU cipher support. Verify DOWNLOAD-SHA256SUMS first. If the image is split, concatenate the .part-* files in lexical order, then run xz -d and verify SHA256SUMS before flashing."
+
+  gh auth status >/dev/null
+  if gh release view "${tag}" >/dev/null 2>&1; then
+    release_is_draft="$(gh release view "${tag}" --json isDraft --jq .isDraft)"
+    if [[ "${release_is_draft}" != "true" ]]; then
+      echo "GitHub Release ${tag} is already published; refusing to overwrite it." >&2
+      exit 2
+    fi
+    echo "Resuming existing draft Release ${tag}."
+  else
+    gh release create "${tag}" --draft \
+      --title "${release_title}" \
+      --notes "${release_notes}"
+  fi
+
+  while IFS= read -r remote_line; do
+    release_name="${remote_line%%$'\t'*}"
+    release_size="${remote_line#*$'\t'}"
+    [[ -n "${release_name}" ]] && remote_sizes["${release_name}"]="${release_size}"
+  done < <(
+    gh release view "${tag}" --json assets \
+      --jq '.assets[] | [.name, .size] | @tsv'
+  )
+
+  for release_file in "${release_files[@]}"; do
+    release_name="$(basename "${release_file}")"
+    release_size="$(stat -c '%s' "${release_file}")"
+    if [[ "${remote_sizes[${release_name}]:-}" == "${release_size}" ]]; then
+      echo "CACHED   ${release_name} (${release_size} bytes)"
+      continue
+    fi
+    echo "UPLOAD   ${release_name} (${release_size} bytes)"
+    gh release upload "${tag}" "${release_file}" --clobber
+  done
+
+  release_api_url="$(gh release view "${tag}" --json apiUrl --jq .apiUrl)"
+  gh api --method PATCH "${release_api_url}" -F draft=false >/dev/null
 }
 
 case "${mode}" in

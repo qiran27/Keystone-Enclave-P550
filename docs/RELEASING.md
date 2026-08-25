@@ -98,7 +98,19 @@ not below 2 GiB is split into 1900 MiB `.part-*` files. The Release contains
 `DOWNLOAD-SHA256SUMS` for the downloaded/compressed assets and the original
 `SHA256SUMS` for the reconstructed raw image. An optional
 `eswin-cipher-speed-results.csv` in the artifact directory is published with
-the same Release.
+the same Release. The script creates a draft first and can resume it after a
+network failure by skipping already uploaded assets with matching sizes.
+
+When the Windows host already provides a local proxy on `127.0.0.1:7890`, a
+build VM using VMware NAT will not inherit it. Forward it explicitly from a
+Windows terminal:
+
+```bash
+ssh -N -R 17890:127.0.0.1:7890 BUILD_USER@BUILD_VM
+```
+
+Keep the tunnel open and set `HTTPS_PROXY=http://127.0.0.1:17890` in the VM
+only for the Release command. This avoids exposing the proxy to the LAN.
 
 ## 4. What another user needs
 
