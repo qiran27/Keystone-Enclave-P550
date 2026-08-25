@@ -59,11 +59,12 @@ machine together with any artifact rebuilt on the P550.
 
 ## 3. GitHub Release
 
-Authenticate the GitHub CLI on the build machine, then run:
+Authenticate the GitHub CLI on the build machine. To publish the validated
+Keystone bootchain and payload, run:
 
 ```bash
 gh auth login
-./publish-release-assets.sh p550-keystone-YYYY.MM.DD
+./publish-release-assets.sh keystone p550-keystone-YYYY.MM.DD
 ```
 
 The release script refuses to publish if the three artifact hashes differ
@@ -82,10 +83,29 @@ SHA256SUMS
 Do not upload the official multi-gigabyte Ubuntu image. End users obtain the
 pinned image directly from SiFive with `./fetch-release-assets.sh all`.
 
+### Integrated Keystone + ESWIN cipher image
+
+After `scripts/build-eswin-cipher-image.sh` and both offline/on-board
+validators pass, publish the integrated image under a separate tag:
+
+```bash
+./publish-release-assets.sh eswin p550-keystone-eswin-cipher-YYYY.MM.DD
+```
+
+This mode verifies `artifacts/eswin-cipher/SHA256SUMS`, xz-compresses the raw
+image and enforces GitHub's per-asset size limit. A compressed image that is
+not below 2 GiB is split into 1900 MiB `.part-*` files. The Release contains
+`DOWNLOAD-SHA256SUMS` for the downloaded/compressed assets and the original
+`SHA256SUMS` for the reconstructed raw image. An optional
+`eswin-cipher-speed-results.csv` in the artifact directory is published with
+the same Release.
+
 ## 4. What another user needs
 
-An end user does not rebuild the payload on a P550. They clone the source
-repository, download the matching GitHub Release assets, obtain the official
-Ubuntu image, copy the flash bundle to ext4 USB, flash the custom bootloader
-and Ubuntu image, then install the published payload. A payload is valid only
-for the kernel recorded in its `PAYLOAD-MANIFEST.txt`.
+An end user does not rebuild the payload on a P550. For the original Keystone
+Release, they clone the source repository, download the matching Release
+assets, obtain the official Ubuntu image, flash the custom bootloader and
+image, then install the published payload. For an integrated ESWIN Release,
+they verify the download checksums, concatenate any `.part-*` files, decompress
+the image, verify the raw-image checksums and flash it directly. The integrated
+image already contains its matching Keystone payload and cipher modules.

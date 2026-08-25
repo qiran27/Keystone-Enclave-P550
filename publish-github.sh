@@ -39,9 +39,13 @@ required_paths=(
   sources.lock.yml
   release-assets.lock.yml
   docs
+  docs/ESWIN-CIPHER.md
   kas
   meta-keystone-p550
   scripts
+  scripts/build-eswin-cipher-image.sh
+  scripts/validate-eswin-cipher-image.sh
+  scripts/validate-eswin-cipher-on-board.sh
   fetch-sources.sh
   fetch-release-assets.sh
   prepare-flash-assets.sh
@@ -146,7 +150,7 @@ if [[ "${PUBLISH_ASSUME_YES:-0}" != "1" ]]; then
 fi
 
 if ! git diff --cached --quiet; then
-  git commit -m "${PUBLISH_COMMIT_MESSAGE:-Add hybrid Ubuntu and Keystone P550 project}"
+  git commit -m "${PUBLISH_COMMIT_MESSAGE:-Update Keystone P550 integration}"
 fi
 
 if ! git rev-parse --verify HEAD >/dev/null 2>&1; then

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0
+
+config KEYSTONE_DRIVER
+	tristate "Keystone enclave host driver"
+	depends on RISCV
+	help
+	  Host-side Linux driver for Keystone enclaves. This copy is built from
+	  the locked Keystone official VisionFive2 implementation and must match
+	  the Security Monitor integrated into the P550 OpenSBI bootchain.

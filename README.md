@@ -1,8 +1,9 @@
 # Keystone on HiFive Premier P550
 
 This project ports Keystone Enclave to the SiFive HiFive Premier P550 while
-reusing SiFive's prebuilt Ubuntu 24.04 root filesystem. It does not rebuild a
-large Yocto demo image.
+reusing SiFive's prebuilt Ubuntu 24.04 root filesystem. The current integrated
+image also adds the ESWIN SCPU mailbox/cipher driver and the official
+`libes_cipher` userspace library. It does not rebuild a large Yocto demo image.
 
 The complete Chinese porting report, including the main failures encountered
 and their fixes, is available in [`PORTING-REPORT.md`](PORTING-REPORT.md).
@@ -42,6 +43,8 @@ The repository currently provides:
 - a bootchain-only kas/Yocto target, replacing the former full image build;
 - safe baseline and future Keystone bundle preparation;
 - the pinned P550, OpenSBI, Linux and Keystone sources;
+- a reproducible integrated-image builder for the ESWIN mailbox/cipher kernel
+  modules, matching Keystone driver and userspace library;
 - the staged porting and hardware-validation plan in `docs/PORTING.md`.
 
 The P550 bootchain target compiles the SM from the pinned VF2 branch into the
@@ -270,6 +273,83 @@ Keystone bundle with explicit matching artifacts:
 bootloader. The bundle script includes them automatically so the attestation
 reference cannot be separated from the bootchain that produced it.
 
+### Build an image with ESWIN cipher acceleration already installed
+
+The official SiFive Ubuntu image does not contain ESWIN's SCPU mailbox and
+`es_cipher` driver. After preparing the Keystone bundle above, build the
+matching `6.12.33-1-premier` kernel and inject the kernel, DTB, modules,
+Keystone payload and official ESWIN `libes_cipher` userspace library into a
+copy of that image:
+
+```bash
+set -o pipefail
+./scripts/build-eswin-cipher-image.sh --force 2>&1 | \
+  tee artifacts/logs/eswin-cipher-image.log
+```
+
+The generated hardware artifacts are:
+
+```text
+artifacts/eswin-cipher/bootloader_ddr5_secboot.bin
+artifacts/eswin-cipher/ubuntu-24.04-preinstalled-server-riscv64-keystone-eswin-cipher.img
+artifacts/eswin-cipher/eswin-cipher-manifest.txt
+artifacts/eswin-cipher/SHA256SUMS
+```
+
+Validate the generated image, its EFI partition, DTB and module ABI before
+copying it to the USB drive:
+
+```bash
+sudo ./scripts/validate-eswin-cipher-image.sh
+```
+
+The kernel layer enables `CONFIG_ESWIN_MBOX=m` and
+`CONFIG_CRYPTO_DEV_ESWIN_EIC770x=m`, retains the image's exact kernel release,
+and adds the `eswin,win2030-ipc` device-tree node. It also builds the locked
+Keystone official VisionFive2 driver in the same kernel invocation so
+`CONFIG_MODVERSIONS` CRCs match. The cipher driver and UAPI are a
+reviewable backport from ESWIN's `linux-6.6.18-EIC7X` vendor tree to the pinned
+SiFive 6.12.33 source; compatibility details are recorded in
+`docs/ESWIN-CIPHER.md`. The userspace packages are downloaded from ESWIN's
+`noble-platform` PPA and accepted only after their pinned SHA-256 checks pass.
+
+This integrated image already contains the matching Keystone payload; the
+manual payload installation below is only for the earlier non-integrated
+bundle. After flashing and booting the integrated image, validate both
+subsystems directly:
+
+```bash
+cd ~/keystone-p550-system
+./scripts/validate-keystone-on-board.sh
+./scripts/validate-eswin-cipher-on-board.sh
+```
+
+To prove that cryptographic work reaches the SCPU rather than only checking
+that the modules loaded, run a hardware provider test (the device is
+root-only by default):
+
+```bash
+cd ~/enc_24
+export OPENSSL_MODULES="$PWD/build-riscv-native"
+sudo --preserve-env=OPENSSL_MODULES \
+  ./build-riscv-native/enc_hw_speed aes
+```
+
+The result must identify `backend: hardware` and `provider: eswinprov`. The
+complete benchmark can be regenerated with:
+
+```bash
+sudo --preserve-env=OPENSSL_MODULES \
+  ./run_all_speed.sh speed_results.csv build-riscv-native
+```
+
+For RSA, the software benchmark imports the same external private-key
+parameters before every measured signature, matching the hardware provider's
+end-to-end key-import-and-sign path. The validated 1000-iteration result was
+29.43 operations/s for software and 44.68 operations/s for ESWIN hardware.
+Hardware SM2 is reported as unavailable because the ESWIN Cipher SDK does not
+expose an SM2 signature API.
+
 The USB flashing commands are in `docs/FLASHING.md`.
 
 After booting the custom firmware, unpack and install the payload:
@@ -366,20 +446,50 @@ Publish to an empty GitHub repository without force-pushing:
   https://github.com/USER/keystone-p550-system.git main
 ```
 
-After the source commit is published and the validated files exist under
-`artifacts/keystone/`, upload the small hardware deliverables to a new GitHub
-Release (requires an authenticated GitHub CLI):
+After the source commit is published, create a new Release for the original
+Keystone bootchain/payload pair (requires an authenticated GitHub CLI):
 
 ```bash
-./publish-release-assets.sh p550-keystone-2026.08.22
+./publish-release-assets.sh keystone p550-keystone-2026.08.23
 ```
 
-The release script requires the successful board-generated
+The Keystone mode requires the successful board-generated
 `hardware-validation.txt`, verifies that its hashes still match, regenerates
 `artifacts/keystone/SHA256SUMS`, refuses to replace an existing release, and
 uploads only the bootchain, payload and manifests. It does not upload the
 official Ubuntu image; end users obtain that pinned image from SiFive through
-`./fetch-release-assets.sh all`. The complete maintainer checklist is in
+`./fetch-release-assets.sh all`.
+
+Publish the new integrated Keystone + ESWIN cipher image as a separate Release:
+
+```bash
+./publish-release-assets.sh eswin p550-keystone-eswin-cipher-2026.08.25
+```
+
+The ESWIN mode verifies `artifacts/eswin-cipher/SHA256SUMS`, compresses the
+8 GiB raw image with xz, and uploads the compressed image, bootloader, manifest
+and download checksums. GitHub requires each Release asset to be smaller than
+2 GiB, so the script automatically creates 1900 MiB `.part-*` files if the
+compressed image is still too large. If
+`artifacts/eswin-cipher/eswin-cipher-speed-results.csv` exists, it is included
+as hardware-validation evidence.
+
+Download and reconstruct an integrated-image Release with:
+
+```bash
+gh release download p550-keystone-eswin-cipher-2026.08.25
+sha256sum -c DOWNLOAD-SHA256SUMS
+
+# Run this only when the Release contains .part-* files.
+cat ubuntu-24.04-preinstalled-server-riscv64-keystone-eswin-cipher.img.xz.part-* \
+  > ubuntu-24.04-preinstalled-server-riscv64-keystone-eswin-cipher.img.xz
+
+xz -dk ubuntu-24.04-preinstalled-server-riscv64-keystone-eswin-cipher.img.xz
+sha256sum -c SHA256SUMS
+```
+
+The flashing commands for the resulting `.img` and bootloader are in
+`docs/FLASHING.md`. The complete maintainer checklist is in
 `docs/RELEASING.md`.
 
 ## Author

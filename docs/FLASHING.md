@@ -63,6 +63,34 @@ Keystone-mode flash, boot Ubuntu and install the matching payload according
 to the payload manifest; do not mix driver/SDK artifacts from another firmware
 revision.
 
+## Integrated Keystone and ESWIN cipher image
+
+When `scripts/build-eswin-cipher-image.sh` has completed, copy these files
+from `artifacts/eswin-cipher/` to the ext4 USB drive:
+
+```text
+bootloader_ddr5_secboot.bin
+ubuntu-24.04-preinstalled-server-riscv64-keystone-eswin-cipher.img
+SHA256SUMS
+```
+
+Use the same bootloader command shown above, then write the integrated image:
+
+```text
+usb stop
+usb reset
+ext4ls usb 0:1 /
+ext4load usb 0:1 0x90000000 bootloader_ddr5_secboot.bin
+echo $filesize
+es_burn write 0x90000000 flash
+es_fs write usb 0 ubuntu-24.04-preinstalled-server-riscv64-keystone-eswin-cipher.img mmc 0
+```
+
+This image already includes the matching Keystone payload, `eswin-mailbox`,
+`es_cipher`, the ESWIN UAPI header and `libes_cipher`; do not run the separate
+payload installer after first boot. Run the two on-board validation scripts
+from a cloned project instead.
+
 ## Install the matching payload after first boot
 
 Copy `keystone-p550-payload.tar.zst` from the USB drive to Ubuntu, then run:

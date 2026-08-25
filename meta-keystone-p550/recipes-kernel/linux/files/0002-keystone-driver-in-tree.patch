@@ -1,0 +1,34 @@
+From 560771e6345d9ee950d495bbd65b8ea1e75cf75e Mon Sep 17 00:00:00 2001
+From: Keystone P550 project <2813480370@qq.com>
+Date: Tue, 25 Aug 2026 16:20:00 +0800
+Subject: [PATCH] misc: build the matching Keystone driver in tree
+
+Build the locked Keystone VF2 driver with the same configuration and
+toolchain as the P550 kernel so CONFIG_MODVERSIONS CRCs always match.
+
+Upstream-Status: Inappropriate [P550 integration of locked Keystone VF2 code]
+---
+ drivers/misc/Kconfig  | 1 +
+ drivers/misc/Makefile | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+index 2b452fc3d698..c7b188ee7fba 100644
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -629,3 +629,4 @@ source "drivers/misc/pvpanic/Kconfig"
+ source "drivers/misc/mchp_pci1xxxx/Kconfig"
+ source "drivers/misc/keba/Kconfig"
++source "drivers/misc/keystone/Kconfig"
+ endmenu
+diff --git a/drivers/misc/Makefile b/drivers/misc/Makefile
+index 3b94b4996726..f2441d589188 100644
+--- a/drivers/misc/Makefile
++++ b/drivers/misc/Makefile
+@@ -72,3 +72,4 @@ obj-$(CONFIG_TPS6594_PFSM)	+= tps6594-pfsm.o
+ obj-$(CONFIG_NSM)		+= nsm.o
+ obj-$(CONFIG_MARVELL_CN10K_DPI)	+= mrvl_cn10k_dpi.o
+ obj-y				+= keba/
++obj-$(CONFIG_KEYSTONE_DRIVER)	+= keystone/
+-- 
+2.34.1

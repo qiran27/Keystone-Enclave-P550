@@ -1,0 +1,140 @@
+From 9ab606963f1764345764ee39bb6fb51a884dc110 Mon Sep 17 00:00:00 2001
+From: Keystone P550 project <2813480370@qq.com>
+Date: Tue, 25 Aug 2026 15:20:00 +0800
+Subject: [PATCH] riscv: eic7700: enable ESWIN SCPU cipher service
+
+Wire the ESWIN mailbox and SCPU cipher service into the SiFive 6.12.33
+P550 kernel.  The service retains ESWIN's published character-device UAPI
+while using the SID/TBU helpers already adapted in this kernel.
+
+Upstream-Status: Inappropriate [board-specific backport of ESWIN vendor driver]
+---
+ drivers/crypto/Kconfig                              |  1 +
+ drivers/crypto/Makefile                             |  1 +
+ drivers/mailbox/Kconfig                             |  8 ++++++++
+ drivers/mailbox/Makefile                            |  1 +
+ .../boot/dts/eswin/eic7700.dtsi                     | 38 ++++++++++++++++++++++
+ include/dt-bindings/memory/eic7700-sid.h            |  2 +-
+ include/dt-bindings/reset/eic7700-syscrg.h          |  4 +++
+ 7 files changed, 54 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/crypto/Kconfig b/drivers/crypto/Kconfig
+index 2c9c5548a05d..4c68e669a21f 100644
+--- a/drivers/crypto/Kconfig
++++ b/drivers/crypto/Kconfig
+@@ -853,3 +853,4 @@ source "drivers/crypto/aspeed/Kconfig"
+ source "drivers/crypto/starfive/Kconfig"
++source "drivers/crypto/eswin/Kconfig"
+ 
+ endif # CRYPTO_HW
+diff --git a/drivers/crypto/Makefile b/drivers/crypto/Makefile
+index 4a8940500be4..637f7fc1157b 100644
+--- a/drivers/crypto/Makefile
++++ b/drivers/crypto/Makefile
+@@ -85,3 +85,4 @@ obj-y += hisilicon/
+ obj-$(CONFIG_CRYPTO_DEV_AMLOGIC_GXL) += amlogic/
+ obj-y += intel/
+ obj-y += starfive/
++obj-y += eswin/
+diff --git a/drivers/mailbox/Kconfig b/drivers/mailbox/Kconfig
+index 42940108a187..53d71969e2ae 100644
+--- a/drivers/mailbox/Kconfig
++++ b/drivers/mailbox/Kconfig
+@@ -8,2 +8,10 @@ if MAILBOX
+ 
++config ESWIN_MBOX
++	tristate "ESWIN EIC7700 mailbox controller"
++	depends on ARCH_ESWIN
++	help
++	  Mailbox controller used to communicate between the P550 application
++	  cores and the EIC7700 SCPU firmware.  The ESWIN cipher service depends
++	  on this controller.
++
+ config ARM_MHU
+diff --git a/drivers/mailbox/Makefile b/drivers/mailbox/Makefile
+index 187f35cba9d9..8a9eb3c77012 100644
+--- a/drivers/mailbox/Makefile
++++ b/drivers/mailbox/Makefile
+@@ -4,2 +4,3 @@
+ obj-$(CONFIG_MAILBOX)		+= mailbox.o
++obj-$(CONFIG_ESWIN_MBOX)	+= eswin-mailbox.o
+ 
+diff --git a/arch/riscv/boot/dts/eswin/eic7700.dtsi b/arch/riscv/boot/dts/eswin/eic7700.dtsi
+index a5c502dfa98b..929fac5e8e2f 100644
+--- a/arch/riscv/boot/dts/eswin/eic7700.dtsi
++++ b/arch/riscv/boot/dts/eswin/eic7700.dtsi
+@@ -7,6 +7,7 @@
+ #include <dt-bindings/memory/eic7700-sid.h>
+ #include <dt-bindings/reset/eic7700-syscrg.h>
+ #include <dt-bindings/clock/eic7700-clock.h>
++#include <dt-bindings/mailbox/eswin-mailbox.h>
+ #include <dt-bindings/riscv/physical-memory.h>
+ 
+ / {
+@@ -149,6 +150,37 @@ sys_con: scu-sys-con@0x51810000 {
+ 		reg = <0x0 0x51810000 0x0 0x8000>;
+ 	};
+ 
++	eswin_mbox0: mailbox@50a00000 {
++		compatible = "eswin,win2030-mailbox";
++		reg = <0x0 ESWIN_MAILBOX_U84_TO_SCPU_REG_BASE 0x0 0x10000>,
++		      <0x0 ESWIN_MAILBOX_SCPU_TO_U84_REG_BASE 0x0 0x10000>;
++		interrupt-parent = <&plic>;
++		interrupts = <117>;
++		#mbox-cells = <1>;
++		clocks = <&clk EIC7700_CLK_MAILBOX_0>,
++			 <&clk EIC7700_CLK_MAILBOX_1>;
++		clock-names = "pclk_mailbox_host", "pclk_mailbox_device";
++		resets = <&reset MBOX_RST_CTRL SW_MBOX_RST_N_0>,
++			 <&reset MBOX_RST_CTRL SW_MBOX_RST_N_1>;
++		reset-names = "rst", "rst_device";
++		lock-bit = <ESWIN_MAILBOX_WR_LOCK_BIT_U84>;
++		irq-bit = <ESWIN_MAIBOX_SCPU_IRQ_BIT>;
++		dma-noncoherent;
++	};
++
++	eswin_ipc_scpu: ipc-scpu {
++		compatible = "eswin,win2030-ipc";
++		iommus = <&smmu0 EIC7700_SID_SCPU>,
++			 <&smmu0 EIC7700_SID_CRYPT>;
++		tbus = <EIC7700_TBUID_SCPU>;
++		eswin,syscfg = <&sys_con SCPU_SID_REG_OFFSET 0>,
++				 <&sys_con CRYPT_SID_REG_OFFSET 0>;
++		mboxes = <&eswin_mbox0 0>;
++		mbox-names = "u84_scpu";
++		numa-node-id = <0>;
++		dma-noncoherent;
++	};
++
+ 	sys_crg: sys-crg@51828000 {
+ 		compatible = "syscon", "simple-mfd";
+ 		reg = <0x000000 0x51828000 0x000000 0x80000>;
+diff --git a/include/dt-bindings/memory/eic7700-sid.h b/include/dt-bindings/memory/eic7700-sid.h
+index 855f31340417..bcc933e70795 100644
+--- a/include/dt-bindings/memory/eic7700-sid.h
++++ b/include/dt-bindings/memory/eic7700-sid.h
+@@ -65,7 +65,7 @@
+ #define DMA1_SID_REG_OFFSET	0x3004
+ 
+ /* crypt */
+-//#define EIC7700_SID_CRYPT	EIC7700_SID_SCPU
++#define EIC7700_SID_CRYPT	EIC7700_SID_SCPU
+ #define CRYPT_SID_REG_OFFSET	0x4004
+ 
+ ///*** for iova mapping test ***/
+diff --git a/include/dt-bindings/reset/eic7700-syscrg.h b/include/dt-bindings/reset/eic7700-syscrg.h
+index a759625b46b7..486d4ea4539e 100644
+--- a/include/dt-bindings/reset/eic7700-syscrg.h
++++ b/include/dt-bindings/reset/eic7700-syscrg.h
+@@ -424,5 +424,9 @@
+ #define		SW_I2C0_PRSTN					BIT0
+ 
++/* Mailboxes 0 and 1 connect U84 to SCPU and SCPU to U84. */
++#define		SW_MBOX_RST_N_0				BIT0
++#define		SW_MBOX_RST_N_1				BIT1
++
+ /*DMA1*/
+ #define		SW_DMA1_ARSTN					BIT0
+ #define		SW_DMA1_HRSTN					BIT1
+-- 
+2.34.1
