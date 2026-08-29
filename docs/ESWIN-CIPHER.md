@@ -32,6 +32,12 @@ The original ESWIN driver depends on several helpers from ESWIN's complete
 - `eic7700_tbu_power()` for the SCPU translation buffer;
 - the fixed node ID `0` for this single-die P550 board, avoiding the vendor
   driver's dependency on the non-exported `cpuid_to_hartid_map()` symbol;
+- regmap software spinlocks for local mailbox serialization.  ESWIN's source
+  requests Linux `hwspinlock` ID 0, but the SiFive P550 kernel registers no
+  hardware-spinlock provider, so the unadapted mailbox fails probe with
+  `-ENXIO`.  The mailbox `WR_LOCK` register continues to arbitrate access with
+  the SCPU; `fast_io` only replaces the unavailable local Linux lock and keeps
+  interrupt-context accesses atomic;
 - current 6.12 `dma_buf_attach()` and attachment mapping APIs;
 - the 6.12 `void` platform-driver remove callback.
 
@@ -66,6 +72,20 @@ After flashing and booting the P550:
 ```bash
 ./scripts/validate-eswin-cipher-on-board.sh
 ```
+
+An OpenSSL 3 provider linked to the official ESWIN Cipher SDK can then exercise
+the actual SCPU path.  For the `enc_24` test tree used during this port:
+
+```bash
+cd ~/enc_24
+export OPENSSL_MODULES="$PWD/build-riscv-native"
+sudo --preserve-env=OPENSSL_MODULES \
+  ./build-riscv-native/enc_hw_speed aes
+```
+
+The hardware program must report `provider: eswinprov`, `backend: hardware`
+and exit successfully.  Merely loading the provider is not treated as proof of
+hardware acceleration.
 
 Successful compilation and image inspection prove build-time integration.
 Actual cipher operations still require this final hardware boot validation.
